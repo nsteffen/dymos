@@ -159,9 +159,14 @@ class Radau(PseudospectralBase):
         grid_data = self.grid_data
 
         kwargs = phase.options['ode_init_kwargs']
-        phase.add_subsystem('rhs_all',
-                            subsys=ODEClass(num_nodes=grid_data.subset_num_nodes['all'],
-                                            **kwargs))
+
+        ode_sys = ODEClass(num_nodes=grid_data.subset_num_nodes['all'], **kwargs)
+
+        # phase.add_subsystem('rhs_all',
+        #                     subsys=ODEClass(num_nodes=grid_data.subset_num_nodes['all'],
+        #                                     **kwargs))
+
+        phase.add_subsystem('rhs_all', subsys=om.SubproblemComp(model=ode_sys, comm=phase.comm))
 
     def configure_ode(self, phase):
         """
@@ -177,6 +182,8 @@ class Radau(PseudospectralBase):
         grid_data = self.grid_data
         map_input_indices_to_disc = grid_data.input_maps['state_input_to_disc']
         ode_inputs = get_promoted_vars(phase.rhs_all, 'input')
+
+        # self._ode_subprob_comp._subprob.model.list_inputs(val=True, units=True, is_indep_var=True)
 
         for name, options in phase.state_options.items():
 
