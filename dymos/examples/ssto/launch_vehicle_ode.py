@@ -27,27 +27,27 @@ class LaunchVehicleODE(om.ExplicitComponent):
         nn = self.options['num_nodes']
 
         self.add_input('y',
-                       val=np.zeros(nn),
+                       val=np.ones(nn),
                        desc='altitude',
                        units='m')
 
         self.add_input('vx',
-                       val=np.zeros(nn),
+                       val=np.ones(nn),
                        desc='x velocity',
                        units='m/s')
 
         self.add_input('vy',
-                       val=np.zeros(nn),
+                       val=np.ones(nn),
                        desc='y velocity',
                        units='m/s')
 
         self.add_input('m',
-                       val=np.zeros(nn),
+                       val=np.ones(nn),
                        desc='mass',
                        units='kg')
 
         self.add_input('theta',
-                       val=np.zeros(nn),
+                       val=np.ones(nn),
                        desc='pitch angle',
                        units='rad')
 
@@ -62,32 +62,32 @@ class LaunchVehicleODE(om.ExplicitComponent):
                        units='s')
         # Outputs
         self.add_output('xdot',
-                        val=np.zeros(nn),
+                        val=np.ones(nn),
                         desc='velocity component in x',
                         units='m/s')
 
         self.add_output('ydot',
-                        val=np.zeros(nn),
+                        val=np.ones(nn),
                         desc='velocity component in y',
                         units='m/s')
 
         self.add_output('vxdot',
-                        val=np.zeros(nn),
+                        val=np.ones(nn),
                         desc='x acceleration magnitude',
                         units='m/s**2')
 
         self.add_output('vydot',
-                        val=np.zeros(nn),
+                        val=np.ones(nn),
                         desc='y acceleration magnitude',
                         units='m/s**2')
 
         self.add_output('mdot',
-                        val=np.zeros(nn),
+                        val=np.ones(nn),
                         desc='mass rate of change',
                         units='kg/s')
 
         self.add_output('rho',
-                        val=np.zeros(nn),
+                        val=np.ones(nn),
                         desc='density',
                         units='kg/m**3')
 
