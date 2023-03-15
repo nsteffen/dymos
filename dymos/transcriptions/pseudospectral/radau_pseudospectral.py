@@ -165,9 +165,9 @@ class Radau(PseudospectralBase):
         # phase.add_subsystem('rhs_all',
         #                     subsys=ODEClass(num_nodes=grid_data.subset_num_nodes['all'],
         #                                     **kwargs))
-        subprob = om.SubproblemComp(model=ode_sys, inputs=['*'], outputs=['*'], comm=phase.comm)
+        submodel = om.SubmodelComp(model=ode_sys, inputs=['*'], outputs=['*'], comm=phase.comm)
 
-        phase.add_subsystem('rhs_all', subsys=subprob)
+        phase.add_subsystem('rhs_all', subsys=submodel)
 
     def configure_ode(self, phase):
         """
