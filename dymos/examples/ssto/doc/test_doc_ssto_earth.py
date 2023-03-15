@@ -18,7 +18,10 @@ class TestDocSSTOEarth(unittest.TestCase):
         # Setup and solve the optimal control problem
         #
         p = om.Problem(model=om.Group())
-        p.driver = om.pyOptSparseDriver()
+        # p.driver = om.pyOptSparseDriver()
+        p.driver = om.pyOptSparseDriver(optimizer='SNOPT')
+        p.driver.opt_settings['iSumm'] = 6
+        p.driver.opt_settings['Major iterations limit'] = 100
         p.driver.declare_coloring(tol=1.0E-12)
 
         from dymos.examples.ssto.launch_vehicle_ode import LaunchVehicleODE
@@ -29,7 +32,8 @@ class TestDocSSTOEarth(unittest.TestCase):
         traj = dm.Trajectory()
 
         phase = dm.Phase(ode_class=LaunchVehicleODE,
-                         transcription=dm.GaussLobatto(num_segments=12, order=3, compressed=False))
+                         transcription=dm.Radau(num_segments=12, order=3, compressed=False))
+                        #  transcription=dm.GaussLobatto(num_segments=12, order=3, compressed=False))
 
         traj.add_phase('phase0', phase)
         p.model.add_subsystem('traj', traj)
@@ -73,8 +77,8 @@ class TestDocSSTOEarth(unittest.TestCase):
         p.set_val('traj.phase0.t_duration', 150.0)
         p.set_val('traj.phase0.states:x', phase.interp('x', [0, 1.15E5]))
         p.set_val('traj.phase0.states:y', phase.interp('y', [0, 1.85E5]))
-        p.set_val('traj.phase0.states:vy', phase.interp('vx', [1.0E-6, 0]))
-        p.set_val('traj.phase0.states:m', phase.interp('vy', [117000, 1163]))
+        p.set_val('traj.phase0.states:vy', phase.interp('vy', [1.0E-6, 1000]))
+        p.set_val('traj.phase0.states:m', phase.interp('m', [117000, 1163]))
         p.set_val('traj.phase0.controls:theta', phase.interp('theta', [1.5, -0.76]))
         p.set_val('traj.phase0.parameters:thrust', 2.1, units='MN')
 
