@@ -68,6 +68,8 @@ class Phase(om.Group):
         self.refine_options = GridRefinementOptionsDictionary()
         self.simulate_options = SimulateOptionsDictionary()
         self.timeseries_ec_vars = {}
+        self._submodel_constraints = {}
+        self._submodel_design_vars = {}
 
         # Dictionaries of variable options that are set by the user via the API
         # These will be applied over any defaults specified by decorators on the ODE
@@ -1493,6 +1495,12 @@ class Phase(om.Group):
         self._timeseries[name] = {'transcription': transcription,
                                   'subset': subset,
                                   'outputs': {}}
+
+    def add_constraint(self, name, **kwargs):
+        self._submodel_constraints[name] = kwargs        
+    
+    def add_design_var(self, name, **kwargs):
+        self._submodel_design_vars[name] = kwargs
 
     def add_objective(self, name, loc='final', index=None, shape=(1,), units=None, ref=None, ref0=None,
                       adder=None, scaler=None, parallel_deriv_color=None):
