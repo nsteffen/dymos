@@ -3,7 +3,7 @@ import numpy as np
 from OrbitAnim import OrbitAnim
 import sys
 
-from rotation_matrices import R_PQW2IJK, R_PQW2RSW
+from rotation_matrices import R_PQW2IJK, R_PQW2RSW, Qr
 
 filename = 'orbital_elements.txt'
 if len(sys.argv) > 1 and sys.argv[1] != '':
@@ -11,7 +11,7 @@ if len(sys.argv) > 1 and sys.argv[1] != '':
 
 orbit = OrbitAnim(filename, animate=True)
 orbit.extract_data()
-# orbit.set_elev(30)
+orbit.set_elev(90)
 # orbit.set_azim(-120)
 # orbit.run_animation()
 
@@ -50,7 +50,9 @@ m = states['m']
 u_r = states['u_r']
 u_theta = states['u_theta']
 u_h = states['u_h']
-tau = states['tau']
+# tau = states['tau']
+
+tau = params['tau']
 
 a = np.zeros(len(t))
 e = np.zeros(len(t))
@@ -132,19 +134,17 @@ yaw = np.zeros(len(t))
 pitch = np.zeros(len(t))
 
 for i in range(len(t)):
-    v_T_angle[i] = np.rad2deg(np.arccos(np.dot(vs[:, i], us[:, i])/(np.linalg.norm(vs[:, i])*np.linalg.norm(us[:, i]))))
-    dT[i] = (params['T']*(1 + 0.01*tau[i]))/m[i]
-    # NOTE the optimizer sometimes cheats, u_r, u_theta, and u_h should not be greater than 1,
-    # but if they are slightly over 1 that'll cause some nans to show up
-    # other nans seen in pitch are due to the arithmetic yielding a value barely greater than 1
-    # which means there might be some other thing to look at
-    u_r[i] = 1.0 if u_r[i] > 1.0 else u_r[i]
-    u_r[i] = -1.0 if u_r[i] < -1.0 else u_r[i]
-    yaw[i] = np.rad2deg(np.arcsin(-u_r[i]))
-    u_theta[i] = 1.0 if u_theta[i] > 1.0 else u_theta[i]
-    u_theta[i] = -1.0 if u_theta[i] < -1.0 else u_theta[i]
-    pitch[i] = np.rad2deg(np.arccos(u_theta[i]/np.cos(np.deg2rad(yaw[i]))))    
-        
+    us[:, i] = np.linalg.inv(Qr(orbit.rs[i, :], orbit.vs[i, :])) @ us[:, i]
+    us[0, i] = 1.0 if us[0, i] > 1.0 else us[0, i]
+    us[0, i] = -1.0 if us[0, i] < -1.0 else us[0, i]
+    us[1, i] = 1.0 if us[1, i] > 1.0 else us[1, i]
+    us[1, i] = -1.0 if us[1, i] < -1.0 else us[1, i]
+    
+    v_T_angle[i] = np.rad2deg(np.arccos(np.dot(vs[i, :], us[:, i])/(np.linalg.norm(vs[i, :])*np.linalg.norm(us[:, i]))))
+    dT[i] = (params['T']*(1 + 0.01*params['tau']))/m[i]
+
+    yaw[i] = np.rad2deg(np.arcsin(-us[0, i]))
+    pitch[i] = np.rad2deg(np.arccos(us[1, i]/np.cos(np.deg2rad(yaw[i]))))
 
 vT_ax = state_fig.add_subplot(321)
 dT_ax = state_fig.add_subplot(322)

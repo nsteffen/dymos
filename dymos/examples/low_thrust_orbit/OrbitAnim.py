@@ -5,10 +5,11 @@ import numpy as np
 from rotation_matrices import R_PQW2IJK, R_PQW2RSW, Qr
 
 class OrbitAnim:
-    def __init__(self, filename, savefile='orbit.gif', animate=True):
+    def __init__(self, filename, savefile='orbit.gif', animate=True, plot_visible=True):
         self.filename = filename
         self.savefile = savefile
         self.animate = animate
+        self.plot_visible = plot_visible
         
         self.mu = 3.986004418e14 # m^3/s^2
         self.Re = 6378.10 # km
@@ -56,6 +57,9 @@ class OrbitAnim:
             elif line.startswith('ISP:'):
                 self.params['Isp'] = float(line.split()[-1])
                 continue
+            elif line.startswith('TAU:'):
+                self.params['tau'] = float(line.split()[-1])
+                continue
             elif line == '':
                 continue
             
@@ -65,6 +69,17 @@ class OrbitAnim:
                 if key == 't' and float(line[i]) in self.states['t']:
                     break
                 self.states[key].append(float(line[i]))
+    
+    def _plot_visible(self, Z):
+        a = self.azim*np.pi/180. - np.pi
+        e = self.elev*np.pi/180. - np.pi/2.
+        X = np.array([np.sin(e)*np.cos(a), np.sin(e)*np.sin(a), np.cos(e)])
+        cond = (np.dot(Z, X) >= 0.0)
+        Z0_c = Z[0] if cond else np.nan
+        Z1_c = Z[1] if cond else np.nan
+        Z2_c = Z[2] if cond else np.nan
+        new_Z = np.array([Z0_c, Z1_c, Z2_c])
+        return new_Z
         
     def initialize(self):
         self.fig = plt.figure(figsize=(12, 6))
@@ -96,28 +111,35 @@ class OrbitAnim:
         u_r = self.states['u_r'][0]
         u_theta = self.states['u_theta'][0]
         u_h = self.states['u_h'][0]
-        tau = self.states['tau'][0]
+        # tau = self.states['tau'][0]
         
         r, v = self.calc_r_v(p, f, g, h, k, L)
         u = np.array([u_r, u_theta, u_h])
-        self.rs = [[r[0][0]], [r[1][0]], [r[2][0]]]
-        self.vs = [[v[0][0]], [v[1][0]], [v[2][0]]]
+        self.rs = np.array([r[0][0], r[1][0], r[2][0]])
+        self.vs = np.array([v[0][0], v[1][0], v[2][0]])
         
         self.r_mags = [np.linalg.norm(r)]
         self.v_mags = [np.linalg.norm(v)]
         
+        # self.rs = self._plot_visible(self.rs)
         self.r_line, = self.orbit_ax.plot3D(self.rs[0], self.rs[1], self.rs[2], '-', color='k', zorder=5)
         
-        v_pts = [[r[i], r[i] + v[i]/self.v_mags[0]*self.scale] for i in range(len(r))]
-        self.v_line, = self.orbit_ax.plot3D(v_pts[0], v_pts[1], v_pts[2], '-', color='red', zorder=5)
+        v_pts = np.array([[r[i], r[i] + v[i]/self.v_mags[0]*self.scale] for i in range(len(r))])
+        v_pts = v_pts.squeeze()
+        # v_pts[:, 0] = self._plot_visible(v_pts[:, 0])
+        # v_pts[:, 1] = self._plot_visible(v_pts[:, 1])
+        self.v_line, = self.orbit_ax.plot3D(v_pts[0, :], v_pts[1, :], v_pts[2, :], '-', color='red', zorder=5)
         
         r = r.squeeze(); v = v.squeeze()
         R = Qr(r, v)
         
         u = np.linalg.inv(R) @ u
         
-        T_pts = [[r[i], r[i] + u[i]*self.scale] for i in range(len(r))]
-        self.T_line, = self.orbit_ax.plot3D(T_pts[0], T_pts[1], T_pts[2], '-', color='orange', zorder=5)
+        T_pts = np.array([[r[i], r[i] + u[i]*self.scale] for i in range(len(r))])
+        T_pts.squeeze()
+        # T_pts[:, 0] = self._plot_visible(T_pts[:, 0])
+        # T_pts[:, 1] = self._plot_visible(T_pts[:, 1])
+        self.T_line, = self.orbit_ax.plot3D(T_pts[0, :], T_pts[1, :], T_pts[2, :], '-', color='orange', zorder=5)
         
         u, v = np.mgrid[0:2 * np.pi:30j, 0:np.pi:20j]
         x = self.earth_scale*self.Re*np.cos(u) * np.sin(v)
@@ -193,7 +215,7 @@ class OrbitAnim:
         u_r = self.states['u_r']
         u_theta = self.states['u_theta']
         u_h = self.states['u_h']
-        tau = self.states['tau']
+        # tau = self.states['tau']
         
         # needed to keep funcanimate from running animate twice
         def init():
@@ -204,27 +226,31 @@ class OrbitAnim:
             self.r_mags.append(np.linalg.norm(r))
             self.v_mags.append(np.linalg.norm(v))
             u = np.array([u_r[i], u_theta[i], u_h[i]])
+            
+            new_rs = np.array([r[0][0], r[1][0], r[2][0]])
+            new_vs = np.array([v[0][0], v[1][0], v[2][0]])
 
-            self.rs[0].append(r[0][0])
-            self.rs[1].append(r[1][0])
-            self.rs[2].append(r[2][0])
-
-            self.vs[0].append(v[0][0])
-            self.vs[1].append(v[1][0])
-            self.vs[2].append(v[2][0])
-
-            self.r_line.set_data_3d((self.rs[0], self.rs[1], self.rs[2]))
-
-            v_pts = [[r[j][0], r[j][0] + v[j][0]/self.v_mags[-1]*self.scale] for j in range(len(r))]
-            self.v_line.set_data_3d((v_pts[0], v_pts[1], v_pts[2]))
-
+            # new_rs = self._plot_visible(new_rs)
+            self.rs = np.vstack((self.rs, new_rs))
+            self.r_line.set_data_3d((self.rs[:, 0], self.rs[:, 1], self.rs[:, 2]))
+            
+            self.vs = np.vstack((self.vs, new_vs))
+            v_pts = np.array([[r[i], r[i] + new_vs[i]/self.v_mags[0]*self.scale] for i in range(len(r))])
+            v_pts = v_pts.squeeze()
+            # v_pts[:, 0] = self._plot_visible(v_pts[:, 0])
+            # v_pts[:, 1] = self._plot_visible(v_pts[:, 1])
+            self.v_line.set_data_3d((v_pts[0, :], v_pts[1, :], v_pts[2, :]))
+            
             r = r.squeeze(); v = v.squeeze()
             R = Qr(r, v)
             
             u = np.linalg.inv(R) @ u
-
-            T_pts = [[r[j], r[j] + u[j]*self.scale] for j in range(len(r))]
-            self.T_line.set_data_3d((T_pts[0], T_pts[1], T_pts[2]))
+            
+            T_pts = np.array([[r[i], r[i] + u[i]*self.scale] for i in range(len(r))])
+            T_pts = T_pts.squeeze()
+            # T_pts[:, 0] = self._plot_visible(T_pts[:, 0])
+            # T_pts[:, 1] = self._plot_visible(T_pts[:, 1])
+            self.T_line.set_data_3d((T_pts[0, :], T_pts[1, :], T_pts[2, :]))
             
             self.p_line.set_xdata(t[:i])
             self.p_line.set_ydata(p[:i])
