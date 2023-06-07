@@ -182,9 +182,10 @@ p.driver = om.pyOptSparseDriver()
 p.driver.options['optimizer'] = 'SNOPT'
 # p.driver.opt_settings['Verify level'] = 3
 p.driver.opt_settings['iSumm'] = 6
-# p.driver.opt_settings['Major optimality tolerance'] = 1.0E-5
+p.driver.opt_settings['Major optimality tolerance'] = 1.0E-5
 # p.driver.opt_settings['Minor iterations limit'] = 500
 p.driver.opt_settings['Major step limit'] = 0.01
+p.driver.opt_settings['Major feasibility tolerance'] = 1.0E-4
 
 p.driver.declare_coloring()
 
@@ -195,7 +196,8 @@ traj = dm.Trajectory()
 # T = 4.446618e-3 lb -> 0.019779542235 N
 traj.add_parameter('T', val=0.019779542235, units='N', targets={'spiral': ['T']}, opt=False)
 traj.add_parameter('Isp', val=450, units='s', targets={'spiral': ['Isp']}, opt=False)
-traj.add_parameter('tau', val=-14.0, units='unitless', targets={'spiral': ['tau']}, opt=False, scaler=1e-2)
+traj.add_parameter('tau', val=-30.0, units='unitless', targets={'spiral': ['tau']}, opt=False)
+# NOTE -9.09081 is optimal value from book
 # traj.add_parameter('tau', val=)
 
 tx = dm.Radau(num_segments=25, order=3, compressed=True) #solve_segments='forward')
@@ -213,7 +215,7 @@ spiral.add_state('g', fix_initial=True, rate_source='g_dot', lower=-1, upper=1)
 spiral.add_state('h', fix_initial=True, rate_source='h_dot', lower=-1, upper=1)
 spiral.add_state('k', fix_initial=True, rate_source='k_dot', lower=-1, upper=1)
 spiral.add_state('L', fix_initial=True, rate_source='L_dot', lower=0.0, ref=2*np.pi, defect_ref=2*np.pi)
-spiral.add_state('m', fix_initial=True, rate_source='m_dot', lower=0.01, upper=1.0)
+spiral.add_state('m', fix_initial=True, rate_source='m_dot', lower=0.01, upper=0.45359237)
 
 # spiral.add_control('tau', opt=True, # continuity=True, rate_continuity=True, rate2_continuity=False,
 #                    # rate_continuity_scaler=1e-3,
@@ -221,14 +223,14 @@ spiral.add_state('m', fix_initial=True, rate_source='m_dot', lower=0.01, upper=1
 #                    units='unitless', lower=-50, upper=0)
 spiral.add_control('u_r', opt=True, continuity=True, rate_continuity=False, rate2_continuity=False,
                    rate_continuity_scaler=1e-6,
-                   scaler=1000,
+                   scaler=10000,
                    units='unitless', lower=-1, upper=1)
 spiral.add_control('u_theta', opt=True, continuity=True, rate_continuity=False, rate2_continuity=False,
                    rate_continuity_scaler=1e-6,
-                   scaler=1000,
+                   scaler=10000,
                    units='unitless', lower=-1, upper=1)
 spiral.add_control('u_h', opt=True, continuity=True, rate_continuity=False, rate2_continuity=False,
-                   scaler=1000,
+                   scaler=10000,
                    rate_continuity_scaler=1e-6,
                    units='unitless', lower=-1, upper=1)
 
@@ -240,7 +242,7 @@ spiral.add_objective('m', loc='final', scaler=-1)
 # spiral.add_timeseries_output('eccentricity = (f**2 + g**2)**0.5', loc='final', equals=0.73550320568829)
 
 
-spiral.add_boundary_constraint('p', loc='final', lower = 12000, upper=12194.239065442713, ref=12194.239065442713)
+spiral.add_boundary_constraint('p', loc='final', lower = 9700, upper=12194.239065442713, ref=12194.239065442713)
 spiral.add_boundary_constraint('eccentricity = (f**2 + g**2)**0.5', loc='final', lower=0.6, upper=0.73550320568829)
 spiral.add_boundary_constraint('tan_inclination = (h**2 + k**2)**0.5', loc='final', lower=0.5, upper=0.61761258786099)
 # spiral.add_boundary_constraint('comp_const1 = f*h + g*k', loc='final', upper=0.0)
@@ -265,7 +267,10 @@ p.set_val('traj.spiral.states:g', spiral.interp('g', [0.0, 0.7286734286206346]))
 p.set_val('traj.spiral.states:h', spiral.interp('h', [-0.25396764647494, -0.6]))
 p.set_val('traj.spiral.states:k', spiral.interp('k', [0.0, -0.14644216839540852]))
 p.set_val('traj.spiral.states:L', spiral.interp('L', [np.pi, 2*np.pi*6]))
-p.set_val('traj.spiral.states:m', spiral.interp('m', [1, 0.4]))
+# p.set_val('traj.spiral.states:m', spiral.interp('m', [1, 0.4]))
+# 1 lb -> 0.45359237 kg
+p.set_val('traj.spiral.states:m', spiral.interp('m', [0.45359237, 0.45359237*0.4]))
+
 
 
 p.set_val('traj.spiral.controls:u_r', spiral.interp('u_r', [0.2, 0.4]))
@@ -285,7 +290,7 @@ if LOAD_CASE:
     case = om.CaseReader('dymos_solution.db').get_case('final')
     p.load_case(case)
 
-dm.run_problem(p, run_driver=True, simulate=True, make_plots=True)#, refine_iteration_limit=5)
+dm.run_problem(p, run_driver=True, simulate=True, make_plots=True, refine_iteration_limit=5)
 
 with open(filename, 'w') as sys.stdout:
     print('STATES: t p f g h k L m u_r u_theta u_h')
