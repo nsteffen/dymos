@@ -1,7 +1,7 @@
 import numpy as np
 from numpy import sin as s 
 from numpy import cos as c 
-
+#askdlfj
 def R_PQW2IJK(Omega, w, i):
     R = np.array([[c(Omega)*c(w) + s(Omega)*s(w)*c(i), c(Omega)*c(w) - s(Omega)*c(w)*c(i), s(Omega)*s(i)],
                   [s(Omega)*c(w) + c(Omega)*s(w)*c(i), -s(Omega)*s(w) + c(Omega)*c(w)*c(i), -c(Omega)*s(i)],
