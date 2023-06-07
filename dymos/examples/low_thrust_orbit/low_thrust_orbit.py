@@ -183,7 +183,7 @@ p.driver.options['optimizer'] = 'SNOPT'
 # p.driver.opt_settings['Verify level'] = 3
 p.driver.opt_settings['iSumm'] = 6
 p.driver.opt_settings['Major optimality tolerance'] = 1.0E-5
-# p.driver.opt_settings['Minor iterations limit'] = 500
+# p.driver.opt_settings['Major iterations limit'] = 10
 p.driver.opt_settings['Major step limit'] = 0.01
 p.driver.opt_settings['Major feasibility tolerance'] = 1.0E-4
 
@@ -196,7 +196,7 @@ traj = dm.Trajectory()
 # T = 4.446618e-3 lb -> 0.019779542235 N
 traj.add_parameter('T', val=0.019779542235, units='N', targets={'spiral': ['T']}, opt=False)
 traj.add_parameter('Isp', val=450, units='s', targets={'spiral': ['Isp']}, opt=False)
-traj.add_parameter('tau', val=-30.0, units='unitless', targets={'spiral': ['tau']}, opt=False)
+traj.add_parameter('tau', val=-9.1, units='unitless', targets={'spiral': ['tau']}, opt=False)
 # NOTE -9.09081 is optimal value from book
 # traj.add_parameter('tau', val=)
 
@@ -243,8 +243,8 @@ spiral.add_objective('m', loc='final', scaler=-1)
 
 
 spiral.add_boundary_constraint('p', loc='final', lower = 9700, upper=12194.239065442713, ref=12194.239065442713)
-spiral.add_boundary_constraint('eccentricity = (f**2 + g**2)**0.5', loc='final', lower=0.6, upper=0.73550320568829)
-spiral.add_boundary_constraint('tan_inclination = (h**2 + k**2)**0.5', loc='final', lower=0.5, upper=0.61761258786099)
+spiral.add_boundary_constraint('eccentricity = (f**2 + g**2)**0.5', loc='final', lower=0.4, upper=0.73550320568829)
+spiral.add_boundary_constraint('tan_inclination = (h**2 + k**2)**0.5', loc='final', lower=0.3, upper=0.61761258786099)
 # spiral.add_boundary_constraint('comp_const1 = f*h + g*k', loc='final', upper=0.0)
 # spiral.add_boundary_constraint('comp_const2 = g*h - k*f', loc='final', upper=0.0)
 spiral.add_path_constraint('u_mag2 = u_r**2 + u_theta**2 + u_h**2', equals=1.0)
@@ -290,7 +290,7 @@ if LOAD_CASE:
     case = om.CaseReader('dymos_solution.db').get_case('final')
     p.load_case(case)
 
-dm.run_problem(p, run_driver=True, simulate=True, make_plots=True, refine_iteration_limit=5)
+dm.run_problem(p, run_driver=True, simulate=True, make_plots=True, refine_iteration_limit=1)
 
 with open(filename, 'w') as sys.stdout:
     print('STATES: t p f g h k L m u_r u_theta u_h')

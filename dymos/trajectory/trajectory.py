@@ -1,14 +1,15 @@
 from collections import OrderedDict
 from collections.abc import Sequence
+from copy import deepcopy
 import itertools
 import sys
-
-from openmdao.utils.om_warnings import warn_deprecation
-from openmdao.utils.graph_utils import get_sccs_topo
-from openmdao.utils.units import unit_conversion
+import warnings
+try:
+    from itertools import izip
+except ImportError:
+    izip = zip
 
 import numpy as np
-import networkx as nx
 
 import openmdao.api as om
 from openmdao.utils.mpi import MPI
@@ -22,7 +23,6 @@ from ..phase.options import TrajParameterOptionsDictionary
 from ..transcriptions.common import ParameterComp
 from ..utils.misc import get_rate_units, _unspecified
 from ..utils.introspection import get_promoted_vars, get_source_metadata
-from .._options import options as dymos_options
 
 
 class Trajectory(om.Group):
@@ -48,15 +48,12 @@ class Trajectory(om.Group):
         A dictionary containing phase linkage information for the Trajectory.
     _phases : dict
         A dictionary of phase names as keys with the Phase objects being their associated values.
-    _phase_graph : nx.DiGraph
-        A graph of linked phases.
     """
     def __init__(self, **kwargs):
         super(Trajectory, self).__init__(**kwargs)
 
         self._linkages = {}
         self._phases = {}
-        self._phase_graph = nx.DiGraph()
 
         self.parameter_options = {}
         self.phases = om.ParallelGroup()
@@ -246,7 +243,7 @@ class Trajectory(om.Group):
             self.parameter_options[name]['name'] = name
         else:
             raise ValueError(f'Attempted to add parameter "{name}" to trajectory but trajectory already has a parameter'
-                             ' of that name.')
+                             'of that name.')
 
         self.set_parameter_options(name, units=units, val=val, desc=desc, opt=opt, targets=targets, lower=lower,
                                    upper=upper, scaler=scaler, adder=adder, ref0=ref0, ref=ref, shape=shape,
@@ -518,7 +515,7 @@ class Trajectory(om.Group):
         var_a = linkage_options['var_a']
         var_b = linkage_options['var_b']
 
-        info_str = f'{self.pathname}: ' if self.pathname else ''
+        info_str = f'Error in linking {var_a} from {phase_name_a} to {var_b} in {phase_name_b}'
 
         phase_a = self._get_subsystem(f'phases.{phase_name_a}')
         phase_b = self._get_subsystem(f'phases.{phase_name_b}')
@@ -534,42 +531,35 @@ class Trajectory(om.Group):
         shapes = {'a': _unspecified, 'b': _unspecified}
 
         for i in ('a', 'b'):
-            if classes[i] == 't':
-                time_name = phases[i].time_options['name']
-                sources[i] = f'timeseries.{time_name}'
+            if classes[i] == 'time':
+                sources[i] = 'timeseries.time'
                 shapes[i] = (1,)
                 units[i] = phases[i].time_options['units']
-            elif classes[i] == 't_phase':
-                time_name = phases[i].time_options['name']
-                sources[i] = f'timeseries.{time_name}_phase'
+            elif classes[i] == 'time_phase':
+                sources[i] = 'timeseries.time_phase'
                 units[i] = phases[i].time_options['units']
                 shapes[i] = (1,)
             elif classes[i] == 'state':
-                prefix = 'states:' if dymos_options['use_timeseries_prefix'] else ''
-                sources[i] = f'timeseries.{prefix}{vars[i]}'
+                sources[i] = f'timeseries.states:{vars[i]}'
                 units[i] = phases[i].state_options[vars[i]]['units']
                 shapes[i] = phases[i].state_options[vars[i]]['shape']
             elif classes[i] in {'indep_control', 'input_control'}:
-                prefix = 'controls:' if dymos_options['use_timeseries_prefix'] else ''
-                sources[i] = f'timeseries.{prefix}{vars[i]}'
+                sources[i] = f'timeseries.controls:{vars[i]}'
                 units[i] = phases[i].control_options[vars[i]]['units']
                 shapes[i] = phases[i].control_options[vars[i]]['shape']
             elif classes[i] in {'control_rate', 'control_rate2'}:
-                prefix = 'control_rates:' if dymos_options['use_timeseries_prefix'] else ''
-                sources[i] = f'timeseries.{prefix}{vars[i]}'
+                sources[i] = f'timeseries.control_rates:{vars[i]}'
                 control_name = vars[i][:-5] if classes[i] == 'control_rate' else vars[i][:-6]
                 units[i] = phases[i].control_options[control_name]['units']
                 deriv = 1 if classes[i].endswith('rate') else 2
                 units[i] = get_rate_units(units[i], phases[i].time_options['units'], deriv=deriv)
                 shapes[i] = phases[i].control_options[control_name]['shape']
             elif classes[i] in {'indep_polynomial_control', 'input_polynomial_control'}:
-                prefix = 'polynomial_controls:' if dymos_options['use_timeseries_prefix'] else ''
-                sources[i] = f'timeseries.{prefix}{vars[i]}'
+                sources[i] = f'timeseries.polynomial_controls:{vars[i]}'
                 units[i] = phases[i].polynomial_control_options[vars[i]]['units']
                 shapes[i] = phases[i].polynomial_control_options[vars[i]]['shape']
             elif classes[i] in {'polynomial_control_rate', 'polynomial_control_rate2'}:
-                prefix = 'polynomial_control_rates:' if dymos_options['use_timeseries_prefix'] else ''
-                sources[i] = f'timeseries.{prefix}{vars[i]}'
+                sources[i] = f'timeseries.polynomial_control_rates:{vars[i]}'
                 control_name = vars[i][:-5] if classes[i] == 'polynomial_control_rate' else vars[i][:-6]
                 control_units = phases[i].polynomial_control_options[control_name]['units']
                 time_units = phases[i].time_options['units']
@@ -589,9 +579,8 @@ class Trajectory(om.Group):
                     shapes[i] = meta['shape']
                     units[i] = meta['units']
                 except ValueError as e:
-                    raise RuntimeError(f'{info_str}Error in linking {var_a} from {phase_name_a} to {var_b} in '
-                                       f'{phase_name_b}. Unable to find variable \'{vars[i]}\' in phase '
-                                       f'\'{phases[i].pathname}\' or its ODE.')
+                    raise RuntimeError(f'{info_str}: Unable to find variable \'{vars[i]}\' in '
+                                       f'phase \'{phases[i].pathname}\' or its ODE.')
 
         linkage_options._src_a = sources['a']
         linkage_options._src_b = sources['b']
@@ -603,16 +592,10 @@ class Trajectory(om.Group):
         if linkage_options['units_b'] is _unspecified:
             linkage_options['units_b'] = units['b']
 
-        if units['a'] is not None and units['b'] is not None:
-            conversion_scaler, conversion_offset = unit_conversion(units['a'], units['b'])
-        else:
-            conversion_scaler, conversion_offset = (1.0, 0.0)
-
-        if not linkage_options['connected'] \
-                and linkage_options['units'] is _unspecified \
-                and (abs(conversion_scaler - 1.0) > 1.0E-15 or abs(conversion_offset) > 1.0E-15):
-            raise ValueError(f'{info_str}Linkage units were not specified but the units of {phase_name_a}.{var_a} '
-                             f'({units["a"]}) and {phase_name_b}.{var_b} ({units["b"]}) are not equivalent. '
+        if (linkage_options['units_a'] != linkage_options['units_b']) and \
+                linkage_options['units'] is _unspecified:
+            raise ValueError(f'{info_str}: Linkage units were not specified but the units of '
+                             f'var_a ({units["a"]}) and var_b ({units["b"]}) are not the same. '
                              f'Units for this linkage constraint must be specified explicitly.')
         else:
             linkage_options['units'] = units['a']
@@ -628,27 +611,28 @@ class Trajectory(om.Group):
             a phase boundary.
 
         """
-        for phase_pair, var_dict in self._linkages.items():
+        linkages_copy = deepcopy(self._linkages)
+        for phase_pair, var_dict in linkages_copy.items():
             phase_name_a, phase_name_b = phase_pair
 
             phase_b = self._get_subsystem(f'phases.{phase_name_b}')
 
-            var_pair = ('*', '*')
-            if var_pair in var_dict:
-                options = var_dict[var_pair]
-                self.add_linkage_constraint(phase_name_a, phase_name_b, var_a='time',
-                                            var_b='time', loc_a=options['loc_a'],
-                                            loc_b=options['loc_b'], mult_a=options['mult_a'],
-                                            mult_b=options['mult_b'])
-                for state_name in phase_b.state_options:
-                    self.add_linkage_constraint(phase_name_a, phase_name_b, var_a=state_name,
-                                                var_b=state_name, loc_a=options['loc_a'],
-                                                loc_b=options['loc_b'],
-                                                mult_a=options['mult_a'],
-                                                mult_b=options['mult_b'])
-                self._linkages[phase_pair].pop(var_pair)
+            for var_pair in var_dict.keys():
+                if tuple(var_pair) == ('*', '*'):
+                    options = var_dict[var_pair]
+                    self.add_linkage_constraint(phase_name_a, phase_name_b, var_a='time',
+                                                var_b='time', loc_a=options['loc_a'],
+                                                loc_b=options['loc_b'], sign_a=options['sign_a'],
+                                                sign_b=options['sign_b'])
+                    for state_name in phase_b.state_options:
+                        self.add_linkage_constraint(phase_name_a, phase_name_b, var_a=state_name,
+                                                    var_b=state_name, loc_a=options['loc_a'],
+                                                    loc_b=options['loc_b'],
+                                                    sign_a=options['sign_a'],
+                                                    sign_b=options['sign_b'])
+                    self._linkages[phase_pair].pop(var_pair)
 
-    def _is_valid_linkage(self, phase_name_a, phase_name_b, loc_a, loc_b, var_a, var_b, fixed_a, fixed_b):
+    def _is_valid_linkage(self, phase_name_a, phase_name_b, loc_a, loc_b, var_a, var_b):
         """
         Validates linkage constraints.
 
@@ -671,10 +655,6 @@ class Trajectory(om.Group):
             The variable name of the first side of the linkage.
         var_b : str
             The variable name of the second side of the linkage.
-        fixed_a : bool
-            True if variable a is fixed at the linkage location.
-        fixed_b : bool
-            True if variable b is fixed at the linkage location
 
         Returns
         -------
@@ -717,26 +697,23 @@ class Trajectory(om.Group):
             if self.comm.rank == rank:
                 print(*args, **kwargs)
 
-        prefixes = {'t': '',
-                    't_phase': '',
-                    'state': 'states:',
-                    'parameter': 'parameters:',
-                    'input_control': 'controls:',
-                    'indep_control': 'controls:',
-                    'control_rate': 'control_rates:',
-                    'control_rate2': 'control_rates:',
-                    'input_polynomial_control': 'polynomial_controls:',
-                    'indep_polynomial_control': 'polynomial_controls:',
-                    'polynomial_control_rate': 'polynomial_control_rates:',
-                    'polynomial_control_rate2': 'polynomial_control_rates:',
-                    'ode': ''
-                    }
-
         def _get_prefixed_var(var, phase):
-            if dymos_options['use_timeseries_prefix']:
-                return f'{prefixes[phase.classify_var(var)]}{var}'
-            else:
-                return var
+            class_var = phase.classify_var(var)
+            prefixes = {'time': '',
+                        'time_phase': '',
+                        'state': 'states:',
+                        'parameter': 'parameters:',
+                        'input_control': 'controls:',
+                        'indep_control': 'controls:',
+                        'control_rate': 'control_rates:',
+                        'control_rate2': 'control_rates:',
+                        'input_polynomial_control': 'polynomial_controls:',
+                        'indep_polynomial_control': 'polynomial_controls:',
+                        'polynomial_control_rate': 'polynomial_control_rates:',
+                        'polynomial_control_rate2': 'polynomial_control_rates:',
+                        'ode': ''
+                        }
+            return f'{prefixes[class_var]}{var}'
 
         # First, if the user requested all states and time be continuous ('*', '*'), then
         # expand it out.
@@ -748,8 +725,6 @@ class Trajectory(om.Group):
 
         linkage_comp = self._get_subsystem('linkages')
 
-        self._phase_graph = phase_graph = nx.DiGraph()
-
         for phase_pair, var_dict in self._linkages.items():
             phase_name_a, phase_name_b = phase_pair
             _print_on_rank(f'{indent}--- {phase_name_a} - {phase_name_b} ---')
@@ -758,8 +733,8 @@ class Trajectory(om.Group):
             phase_b = self._get_subsystem(f'phases.{phase_name_b}')
 
             # Pull out the maximum variable name length of all variables to make the print nicer.
-            var_len_a = [len(_get_prefixed_var(var, phase_a)) for var, _ in var_dict]
-            var_len_b = [len(_get_prefixed_var(var, phase_b)) for _, var in var_dict]
+            var_len_a = [len(_get_prefixed_var(var_pair[0], phase_a)) for var_pair in var_dict]
+            var_len_b = [len(_get_prefixed_var(var_pair[1], phase_b)) for var_pair in var_dict]
             padding_a = max(var_len_a) + 2
             padding_b = max(var_len_b) + 2
 
@@ -776,15 +751,31 @@ class Trajectory(om.Group):
                 src_a = options._src_a
                 src_b = options._src_b
 
-                fixed_a = phase_a._is_fixed(var_a, class_a, loc_a)
-                fixed_b = phase_b._is_fixed(var_b, class_b, loc_b)
+                if class_a == 'time':
+                    fixed_a = phase_a.is_time_fixed(loc_a)
+                elif class_a == 'state':
+                    fixed_a = phase_a.is_state_fixed(var_a, loc_a)
+                elif class_a in {'input_control', 'indep_control'}:
+                    fixed_a = phase_a.is_control_fixed(var_a, loc_a)
+                elif class_a in {'input_polynomial_control', 'indep_polynomial_control'}:
+                    fixed_a = phase_a.is_polynomial_control_fixed(var_a, loc_a)
+                elif class_a == 'parameter':
+                    fixed_a = not phase_a.parameter_options[var_a]['opt']
+                else:
+                    fixed_a = True
 
-                if class_a == 't' and class_b == 't':
-                    phase_graph.add_node(phase_a.name, fix_initial=None, t_initial=None,
-                                         duration_bounds=None, initial_bounds=None)
-                    phase_graph.add_node(phase_b.name, fix_initial=None, t_initial=None,
-                                         duration_bounds=None, initial_bounds=None)
-                phase_graph.add_edge(phase_a.name, phase_b.name)
+                if class_b == 'time':
+                    fixed_b = phase_b.is_time_fixed(loc_b)
+                elif class_b == 'state':
+                    fixed_b = phase_b.is_state_fixed(var_b, loc_b)
+                elif class_b in {'input_control', 'indep_control'}:
+                    fixed_b = phase_b.is_control_fixed(var_b, loc_b)
+                elif class_b in {'input_polynomial_control', 'indep_polynomial_control'}:
+                    fixed_b = phase_b.is_polynomial_control_fixed(var_b, loc_b)
+                elif class_a == 'parameter':
+                    fixed_a = not phase_b.parameter_options[var_a]['opt']
+                else:
+                    fixed_b = True
 
                 prefixed_a = _get_prefixed_var(var_a, phase_a)
                 prefixed_b = _get_prefixed_var(var_b, phase_b)
@@ -793,16 +784,19 @@ class Trajectory(om.Group):
                 str_fixed_b = '*' if fixed_b else ''
 
                 if options['connected']:
-                    if class_b == 't':
-                        self.connect(f'{phase_name_a}.{src_a}', f'{phase_name_b}.t_initial',
+                    if class_b == 'time':
+                        self.connect(f'{phase_name_a}.{src_a}',
+                                     f'{phase_name_b}.t_initial',
                                      src_indices=[-1], flat_src_indices=True)
                     elif class_b == 'state':
                         tgt_b = f'initial_states:{var_b}'
-                        self.connect(f'{phase_name_a}.{src_a}', f'{phase_name_b}.{tgt_b}',
+                        self.connect(f'{phase_name_a}.{src_a}',
+                                     f'{phase_name_b}.{tgt_b}',
                                      src_indices=om.slicer[-1, ...])
                     elif class_b == 'parameter':
                         tgt_b = f'parameters:{var_b}'
-                        self.connect(f'{phase_name_a}.{src_a}', f'{phase_name_b}.{tgt_b}',
+                        self.connect(f'{phase_name_a}.{src_a}',
+                                     f'{phase_name_b}.{tgt_b}',
                                      src_indices=om.slicer[-1, ...])
                     else:
                         msg = f'Could not create connection linkage from phase `{phase_name_a}` ' \
@@ -814,13 +808,10 @@ class Trajectory(om.Group):
                     _print_on_rank(f'{indent * 2}{prefixed_a:<{padding_a}s} [{loc_a}{str_fixed_a}] ->  '
                                    f'{prefixed_b:<{padding_b}s} [{loc_b}{str_fixed_b}]')
                 else:
+                    is_valid, msg = self._is_valid_linkage(phase_name_a, phase_name_b,
+                                                           loc_a, loc_b, var_a, var_b)
 
-                    if fixed_a and fixed_b:
-                        msg = f'Cannot link {loc_a} value of "{var_a}" in {phase_name_a} to {loc_b} ' \
-                              f'value of "{var_b}" in {phase_name_b}. Values on both sides of the linkage are fixed ' \
-                              'and the linkage is enforced via constraint. Either link the variables via connection ' \
-                              'or make the variables design variables on at least one side of the connection.'
-
+                    if not is_valid:
                         raise ValueError(f'Invalid linkage in Trajectory {self.pathname}: {msg}')
 
                     linkage_comp.add_linkage_configure(options)
@@ -841,114 +832,6 @@ class Trajectory(om.Group):
                                    f'{prefixed_b:<{padding_b}s} [{loc_b}{str_fixed_b}]')
 
         _print_on_rank('\n* : Value is fixed or is an input.\n')
-
-    def _check_phase_graph(self):
-
-        # determine if we have any fixed t_initial that are outside of allowed bounds
-        def get_final_tbounds(phase_name, node_data, old_tmin=-INF_BOUND, old_tmax=INF_BOUND):
-            t_initial = node_data['t_initial']
-            fixed_t_initial = node_data['fix_initial']
-            duration_min, duration_max = node_data['duration_bounds']
-            initial_min, initial_max = node_data['initial_bounds']
-
-            duration_min = -INF_BOUND if duration_min is None else duration_min
-            duration_max = INF_BOUND if duration_max is None else duration_max
-            old_tmin = -INF_BOUND if old_tmin is None else old_tmin
-            old_tmax = INF_BOUND if old_tmax is None else old_tmax
-
-            errs = []
-            new_min_t = -INF_BOUND
-            new_max_t = INF_BOUND
-
-            if fixed_t_initial:
-                # if t_initial is fixed, first check if it's within the incoming bounds
-                if not old_tmin <= t_initial <= old_tmax:
-                    errs.append(f"Fixed t_initial of {t_initial} is outside of allowed bounds "
-                                f"{(old_tmin, old_tmax)} for phase '{phase_name}'.")
-
-                if duration_min > -INF_BOUND:
-                    new_min_t = t_initial + duration_min
-
-                if duration_max < INF_BOUND:
-                    new_max_t = t_initial + duration_max
-
-            else:
-                initial_min = -INF_BOUND if initial_min is None else initial_min
-                initial_max = INF_BOUND if initial_max is None else initial_max
-
-                # check for overlap of incoming bounds on t and initial_bounds
-                if not (old_tmin <= initial_min <= old_tmax or
-                        old_tmin <= initial_max <= old_tmax or
-                        initial_min <= old_tmin <= initial_max or
-                        initial_min <= old_tmax <= initial_max):
-                    errs.append(f"t_initial bounds of ({initial_min}, {initial_max}) do not overlap"
-                                f" with allowed bounds {(old_tmin, old_tmax)} for phase "
-                                f"'{phase_name}'.")
-
-                if duration_min > -INF_BOUND:
-                    tmin = max(old_tmin, initial_min)
-                    if tmin > -INF_BOUND:
-                        new_min_t = tmin + duration_min
-                    else:
-                        new_min_t = tmin
-
-                if duration_max < INF_BOUND:
-                    tmax = min(old_tmax, initial_max)
-                    if tmax < INF_BOUND:
-                        new_max_t = tmax + duration_max
-                    else:
-                        new_max_t = tmax
-
-            return new_min_t, new_max_t, errs
-
-        phase_graph = self._phase_graph
-
-        # since we have a graph, do a quick check that we have no cycles
-        sccs = get_sccs_topo(phase_graph)
-        cycles = sorted([s for s in sccs if len(s) > 1], key=lambda x: len(x))
-        if cycles:
-            raise RuntimeError(f"{self.msginfo}: The following cycles were found in the phase "
-                               f"linkage graph: {[sorted(c) for c in cycles]}.")
-
-        node_data = phase_graph.nodes(data=True)
-
-        # only keep the part of the graph where 't' connects phases
-        G = phase_graph.subgraph([n for n, meta in node_data if 't_initial' in meta])
-
-        # Update G nodes with final values for time properties.
-        # We wait until now because users can set some values after setup.
-        for name, data in G.nodes(data=True):
-            phase = self._get_subsystem(f'phases.{name}')
-            data['fix_initial'] = phase.time_options['fix_initial']
-            data['duration_bounds'] = phase.time_options['duration_bounds']
-            data['initial_bounds'] = phase.time_options['initial_bounds']
-            data['t_initial'] = phase.time_options['initial_val']
-
-        # find starting node(s) in the graph
-        start_nodes = [n for n, degree in G.in_degree() if degree == 0]
-        all_errs = []
-        skip = set()
-        for start_name in start_nodes:
-            stack = [(start_name, -INF_BOUND, INF_BOUND)]
-            while stack:
-                src, oldlb, oldub = stack.pop()
-                lb, ub, errs = get_final_tbounds(src, node_data[src],
-                                                 old_tmin=oldlb, old_tmax=oldub)
-                if errs:
-                    all_errs.append((src, errs))
-                    # skip nodes downstream of the failing node.
-                    skip.update(list(nx.dfs_preorder_nodes(G, source=src)))
-
-                for tgt in G[src]:
-                    if tgt not in skip:
-                        stack.append((tgt, lb, ub))
-
-        if all_errs:
-            errs = []
-            for _, s in sorted(all_errs, key=lambda x: x[0]):
-                errs.extend(s)
-            err_lines = '\n'.join(errs) if len(errs) > 1 else errs[0]
-            raise RuntimeError(f"{self.msginfo}: {err_lines}")
 
     def configure(self):
         """
@@ -972,9 +855,7 @@ class Trajectory(om.Group):
         self.promotes('phases', inputs=['*'], outputs=['*'])
 
     def add_linkage_constraint(self, phase_a, phase_b, var_a, var_b, loc_a='final', loc_b='initial',
-                               sign_a=_unspecified, sign_b=_unspecified,
-                               mult_a=_unspecified, mult_b=_unspecified,
-                               units=_unspecified, lower=None, upper=None,
+                               sign_a=1.0, sign_b=-1.0, units=_unspecified, lower=None, upper=None,
                                equals=None, scaler=None, adder=None, ref0=None, ref=None,
                                linear=False, connected=False):
         """
@@ -982,7 +863,7 @@ class Trajectory(om.Group):
 
         Phase linkage constraints are enforced by constraining the following equation:
 
-        mult_a * var_a + mult_b * var_b
+        sign_a * var_a + sign_b * var_b
 
         The resulting value of this equation is constrained.  This can satisfy 'coupling' or
         'linkage' conditions across phase boundaries:  enforcing continuity,
@@ -1039,18 +920,12 @@ class Trajectory(om.Group):
             The location of the variable in the second phase of the linkage constraint (one of
             'initial' or 'final').
         sign_a : float
-            The multiplier applied to the variable from the first phase in the linkage constraint.
-            This argument is deprecated in favor of mult_a.
+            The sign applied to the variable from the first phase in the linkage constraint.
         sign_b : float
-            The multiplier applied to the variable from the second phase in the linkage constraint.
-            This argument is deprecated in favor of mult_b.
-        mult_a : float
-            The multiplier applied to the variable from the first phase in the linkage constraint.
-        mult_b : float
-            The multiplier applied to the variable from the second phase in the linkage constraint.
+            The sign applied to the variable from the second phase in the linkage constraint.
         units : str or None or _unspecified
-            Units of the linkage. If _unspecified, dymos will use the units from the variable
-            in the first phase of the linkage. Units of the two specified variables must be
+            Units of the linkage.  If _unspecified, dymos will use the units from the variable
+            in the first phase of the linkage.  Units of the two specified variables must be
             compatible.
         lower : float or array or None
             The lower bound applied as a constraint on the linkage equation.
@@ -1067,39 +942,17 @@ class Trajectory(om.Group):
         ref : float or array or None
             The unit-reference value of the linkage constraint.
         linear : bool
-            If True, treat this variable as a linear constraint, otherwise False. Linear
+            If True, treat this variable as a linear constraint, otherwise False.  Linear
             constraints should only be applied if the variable on each end of the linkage is a
             design variable or a linear function of one.
         connected : bool
             If True, this constraint is enforced by direct connection rather than a constraint
-            for the optimizer. This is only valid for states and time.
+            for the optimizer.  This is only valid for states and time.
         """
-        if sign_a is not _unspecified:
-            if mult_a is not _unspecified:
-                raise ValueError(
-                    "Both the deprecated 'sign_a' option and option 'mult_a' were specified."
-                    "Going forward, please use only option mult_a.")
-            warn_deprecation("'sign_a' has been deprecated. Use 'mult_a' instead.")
-            mult_a = sign_a
-        else:  # sign_a is _unspecified
-            if mult_a is _unspecified:
-                mult_a = 1.0
-
-        if sign_b is not _unspecified:
-            if mult_b is not _unspecified:
-                raise ValueError(
-                    "Both the deprecated 'sign_b' option and option 'mult_b' were specified."
-                    "Going forward, please use only option mult_b.")
-            warn_deprecation("'sign_b' has been deprecated. Use 'mult_b' instead.")
-            mult_b = sign_b
-        else:  # sign_a is _unspecified
-            if mult_b is _unspecified:
-                mult_b = -1.0
-
         if connected:
             invalid_options = []
-            for arg in ['lower', 'upper', 'equals', 'scaler', 'adder', 'ref0', 'ref', 'units']:
-                if locals()[arg] is not None and locals()[arg] is not _unspecified:
+            for arg in ['lower', 'upper', 'equals', 'scaler', 'adder', 'ref0', 'ref']:
+                if locals()[arg] is not None:
                     invalid_options.append(arg)
             if locals()['linear']:
                 invalid_options.append('linear')
@@ -1108,7 +961,7 @@ class Trajectory(om.Group):
                       f'in trajectory {self.pathname}. The following options for ' \
                       f'add_linkage_constraint were specified but not valid when ' \
                       f'option \'connected\' is True: ' + ' '.join(invalid_options)
-                om.issue_warning(msg, category=om.UnusedOptionWarning)
+                warnings.warn(msg)
 
         if (phase_a, phase_b) not in self._linkages:
             self._linkages[phase_a, phase_b] = OrderedDict()
@@ -1120,8 +973,8 @@ class Trajectory(om.Group):
         d['var_b'] = var_b
         d['loc_a'] = loc_a
         d['loc_b'] = loc_b
-        d['mult_a'] = mult_a
-        d['mult_b'] = mult_b
+        d['sign_a'] = sign_a
+        d['sign_b'] = sign_b
         d['units'] = units
         d['lower'] = lower
         d['upper'] = upper
@@ -1133,10 +986,9 @@ class Trajectory(om.Group):
         d['linear'] = linear
         d['connected'] = connected
 
-    def link_phases(self, phases, vars=None, locs=('final', 'initial'), connected=False,
-                    units=_unspecified, scaler=None, adder=None, ref0=None, ref=None, linear=False):
+    def link_phases(self, phases, vars=None, locs=('final', 'initial'), connected=False):
         """
-        Specify that phases in the given sequence are to assume continuity of the given variables.
+        Specify that phases in the given sequence are to be assume continuity of the given variables.
 
         This method caches the phase linkages, and may be called multiple times to express more
         complex behavior (branching phases, phases only continuous in some variables, etc).
@@ -1163,22 +1015,6 @@ class Trajectory(om.Group):
         connected : bool
             Set to True to directly connect the phases being linked. Otherwise, create constraints
             for the optimizer to solve.
-        units : str or None or _unspecified
-            Units of the linkage.  If _unspecified, dymos will use the units from the variable
-            in the first phase of the linkage.  Units of the two specified variables must be
-            compatible.
-        scaler : float or array or None
-            The scaler of the linkage constraint.
-        adder : float or array or None
-            The adder of the linkage constraint.
-        ref0 : float or array or None
-            The zero-reference value of the linkage constraint.
-        ref : float or array or None
-            The unit-reference value of the linkage constraint.
-        linear : bool
-            If True, treat this variable as a linear constraint, otherwise False.  Linear
-            constraints should only be applied if the variable on each end of the linkage is a
-            design variable or a linear function of one.
 
         See Also
         --------
@@ -1214,9 +1050,7 @@ class Trajectory(om.Group):
             for var in _vars:
                 self.add_linkage_constraint(phase_a=phase_name_a, phase_b=phase_name_b,
                                             var_a=var, var_b=var, loc_a=loc_a, loc_b=loc_b,
-                                            connected=connected, units=units,
-                                            scaler=scaler, adder=adder, ref0=ref0, ref=ref,
-                                            linear=linear)
+                                            connected=connected)
 
     def _constraint_report(self, outstream=sys.stdout):
         if self.options['sim_mode']:
@@ -1248,11 +1082,8 @@ class Trajectory(om.Group):
             for loc, d in ds.items():
                 str_loc = f'[{loc}]'
                 for options in d:
-                    if options['is_expr']:
-                        name = options['constraint_name']
-                    else:
-                        name = options['name']
-                    _, shape, units, linear = tx._get_objective_src(name, loc, phase, ode_outputs=ode_outputs)
+                    expr = options['name']
+                    _, shape, units, linear = tx._get_objective_src(expr, loc, phase, ode_outputs=ode_outputs)
 
                     equals = options['equals']
                     lower = options['lower']
@@ -1285,11 +1116,11 @@ class Trajectory(om.Group):
                         str_upper = ''
 
                     if equals is not None:
-                        printer(f'{2 * indent}{str_loc:<10s}{str_equals} == {name} [{str_units}]',
+                        printer(f'{2 * indent}{str_loc:<10s}{str_equals} == {expr} [{str_units}]',
                                 file=outstream)
                     else:
                         printer(
-                            f'{2 * indent}{str_loc:<10s}{str_lower} {name} {str_upper} [{str_units}]',
+                            f'{2 * indent}{str_loc:<10s}{str_lower} {expr} {str_upper} [{str_units}]',
                             file=outstream)
 
         for phase_name, phs in self._phases.items():
@@ -1374,10 +1205,7 @@ class Trajectory(om.Group):
             sim_prob.set_val(sim_prob_prom_path, self.get_val(f'parameters:{name}'))
 
         for phase_name, phs in sim_traj._phases.items():
-            # TODO: use the following method once OpenMDAO >= 3.25.1
-            # phs.set_val_from_phase(from_phase=self._phases[phase_name])
-            phs.initialize_values_from_phase(prob=sim_prob,
-                                             from_phase=self._phases[phase_name],
+            phs.initialize_values_from_phase(sim_prob, self._phases[phase_name],
                                              phase_path=traj_name)
 
         print(f'\nSimulating trajectory {self.pathname}')
