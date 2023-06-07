@@ -154,6 +154,10 @@ class OrbitAnim:
         self.orbit_ax.set_zlim(-self.Re*self.ax_scaler, self.Re*self.ax_scaler)
         self.orbit_ax.view_init(elev=self.elev, azim=self.azim)
         
+        self.cur_xlim = self.Re*self.ax_scaler
+        self.cur_ylim = self.Re*self.ax_scaler
+        self.cur_zlim = self.Re*self.ax_scaler
+        
         self.p_line, = self.p_ax.plot(t, p, '-')
         self.f_line, = self.fg_ax.plot(t, f, '-', label='f')
         self.g_line, = self.fg_ax.plot(t, g, '-', label='g')
@@ -233,6 +237,18 @@ class OrbitAnim:
             # new_rs = self._plot_visible(new_rs)
             self.rs = np.vstack((self.rs, new_rs))
             self.r_line.set_data_3d((self.rs[:, 0], self.rs[:, 1], self.rs[:, 2]))
+            
+            # if new_rs[0] > self.cur_xlim:
+            #     self.cur_xlim = new_rs[0]
+            self.cur_xlim = abs(new_rs[0]) if abs(new_rs[0]) > self.cur_xlim else self.cur_xlim
+            self.cur_ylim = abs(new_rs[1]) if abs(new_rs[1]) > self.cur_ylim else self.cur_ylim
+            self.cur_zlim = abs(new_rs[2]) if abs(new_rs[2]) > self.cur_zlim else self.cur_zlim
+            
+            self.orbit_ax.set_xlim(-self.cur_xlim, self.cur_xlim)
+            self.orbit_ax.set_ylim(-self.cur_ylim, self.cur_ylim)
+            self.orbit_ax.set_zlim(-self.cur_zlim, self.cur_zlim)
+            
+            self.orbit_ax.set_aspect('equal')
             
             self.vs = np.vstack((self.vs, new_vs))
             v_pts = np.array([[r[i], r[i] + new_vs[i]/self.v_mags[0]*self.scale] for i in range(len(r))])
